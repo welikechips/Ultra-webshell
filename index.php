@@ -833,7 +833,7 @@ if (!isset($_SESSION['username'])) : ?>
                     <?php endif; ?>
                     <?php if (isset($_GET['action']) && $_GET['action'] != 'delete') : $action = $_GET['action'] ?>
                         <div class="col-md-12">
-                            <div class="row justify-content-center">
+                            <div class="row">
                                 <div class="col-md-5">
                                     <?php if ($action == 'rename' && isset($_GET['item'])) : ?>
                                         <form action="" method="post">
