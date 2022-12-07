@@ -532,6 +532,9 @@ $dirs = scandir($path);
             .td-break {
                 word-break: break-all
             }
+            textarea {
+                resize: both;
+            }
         </style>
     </head>
 <body class="bg-dark text-light">
